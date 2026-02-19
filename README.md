@@ -1,4 +1,4 @@
-git clone https://github.com/angelarin/webscrap.git
+git clone https://github.com/angelarin/googlecrawler.git
 
 cd webscrap
 
