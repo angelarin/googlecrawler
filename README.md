@@ -1,6 +1,6 @@
 git clone https://github.com/angelarin/googlecrawler.git
 
-cd webscrap
+cd googlecrawler
 
 npm install @playwright/test
 
