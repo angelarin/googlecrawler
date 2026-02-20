@@ -1,81 +1,90 @@
 import { test } from '@playwright/test';
 
 const targetSites = [
-  'talenta.usu.ac.id',
+  'ocs.usu.ac.id', 'kelas.usu.ac.id'
 ];
 
-const wordlist = ['slot gacor'];
+const wordlist = ['slot', 'gacor'];
 
-test('Security Audit: Deep Search & Content Verification', async ({ page, context }) => {
-  test.setTimeout(300000);
+test('Security Audit: Deep Search with Pagination', async ({ page, context }) => {
+  test.setTimeout(600000); // Naikkan ke 10 menit karena proses lebih panjang
+
   for (const site of targetSites) {
     for (const word of wordlist) {
-      console.log(`\nMencari di CSE: site:${site} "${word}"`);
+      console.log(`\n🔍 [FASE 1] Mencari di CSE: site:${site} "${word}"`);
 
-      // Navigasi ke CSE
       await page.goto('https://cse.google.com/cse?cx=e63b9c8eaa8d4418f');
       const searchBox = page.getByRole('textbox', { name: 'telusuri' });
       await searchBox.fill(`site:${site} "${word}"`);
       await searchBox.press('Enter');
 
-      let linksToVisit: string[] = [];
+      let allCollectedLinks: string[] = [];
+      let pageNumber = 1;
 
-      try {
-        // Tunggu hingga hasil muncul
-        await page.waitForSelector('.gsc-result', { timeout: 5000 });
+      // --- LOGIKA PAGINATION DIMULAI ---
+      while (true) {
+        try {
+          // Tunggu hasil muncul di halaman saat ini
+          await page.waitForSelector('.gsc-result', { timeout: 7000 });
 
-        // Simpan semua URL ke dalam memory (Array)
-        linksToVisit = await page.$$eval('a.gs-title', (anchors, currentSite) => {
-          return anchors
-            .map(a => (a as HTMLAnchorElement).href)
-            .filter(href => href && href.startsWith(`https://${currentSite}/`));
-        }, site);
+          // Scrap link yang ada di halaman saat ini
+          const currentLinks = await page.$$eval('a.gs-title', (anchors, currentSite) => {
+            return anchors
+              .map(a => (a as HTMLAnchorElement).href)
+              .filter(href => href && href.startsWith(`https://${currentSite}/`));
+          }, site);
 
-        // Hilangkan duplikat
-        linksToVisit = [...new Set(linksToVisit)];
+          allCollectedLinks.push(...currentLinks);
+          console.log(`   📄 Halaman ${pageNumber}: Mendapatkan ${currentLinks.length} link.`);
 
-      } catch (e) {
-        console.log(`Tidak ditemukan hasil di Google untuk "${word}" di ${site}`);
-        continue; // Lanjut ke kata kunci berikutnya jika Google tidak menemukan apa-apa
+          // Cek apakah ada tombol halaman berikutnya (misal: Halaman 2, 3, dst)
+          const nextPageNumber = pageNumber + 1;
+          const nextPageButton = page.locator('.gsc-cursor-page').filter({ hasText: nextPageNumber.toString() });
+
+          if (await nextPageButton.isVisible()) {
+            await nextPageButton.click();
+            pageNumber++;
+            // Beri jeda agar hasil halaman berikutnya termuat sempurna
+            await page.waitForTimeout(2000); 
+          } else {
+            // Jika tidak ada tombol halaman berikutnya, hentikan loop pagination
+            break;
+          }
+        } catch (e) {
+          // Jika tidak ada hasil sama sekali sejak halaman pertama
+          if (pageNumber === 1) console.log(`   ✅ Tidak ditemukan hasil untuk "${word}"`);
+          break;
+        }
       }
 
-      if (linksToVisit.length > 0) {
-        console.log(`Ditemukan ${linksToVisit.length} URL. Memulai verifikasi konten...`);
+      // Hilangkan duplikat dari semua halaman yang dikumpulkan
+      const uniqueLinks = [...new Set(allCollectedLinks)];
 
-        // Kunjungi link satu per satu dari memory
-        for (const url of linksToVisit) {
-          const verifyPage = await context.newPage(); // Gunakan tab baru agar sesi CSE tidak hilang
-          
+      // --- FASE VERIFIKASI DIMULAI ---
+      if (uniqueLinks.length > 0) {
+        console.log(`\n🚀 [FASE 2] Memulai verifikasi ${uniqueLinks.length} URL unik...`);
+
+        for (const url of uniqueLinks) {
+          const verifyPage = await context.newPage();
           try {
-            console.log(`    Mengecek: ${url}`);
+            console.log(`    ⏳ Mengecek: ${url}`);
             await verifyPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
             
-            // 1. Ambil seluruh HTML source
             const htmlContent = await verifyPage.content();
-            
-            // 2. Cek apakah kata kunci ada di kode sumber
             const foundInHtml = htmlContent.toLowerCase().includes(word.toLowerCase());
-            
-            // 3. Cek juga apakah kata kunci ada di URL-nya (kadang redirect ke domain aneh)
             const foundInUrl = verifyPage.url().toLowerCase().includes(word.toLowerCase());
 
-            // Scrap kata kunci di dalam halaman
-            // const bodyText = await verifyPage.innerText('body');
-            // const isFound = bodyText.toLowerCase().includes(word.toLowerCase());
-
             if (foundInHtml || foundInUrl) {
-              // Kalau ada, tampilkan di terminal
-              console.log(`    POSITIF: Kata "${word}" ditemukan di: ${url}`);
+              console.log(`    🚨 POSITIF: Kata "${word}" ditemukan di: ${url}`);
             }
           } catch (err) {
-            console.log(`    Gagal akses (Mungkin 404/Timeout): ${url}`);
+            console.log(`    ⚠️ Gagal akses (Timeout/404): ${url}`);
           } finally {
-            await verifyPage.close(); // Tutup tab verifikasi
+            await verifyPage.close();
           }
         }
       }
       
-      // Jeda agar tidak terkena rate limit Google
       await page.waitForTimeout(2000);
     }
   }
